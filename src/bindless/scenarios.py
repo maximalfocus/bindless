@@ -61,7 +61,8 @@ def expected_invoice_numbers(org_id: int, supplier_name: str) -> tuple[str, ...]
     )
 
 
-def _rows(payload: object) -> list[dict[str, Any]]:
+def rows_of(payload: object) -> list[dict[str, Any]]:
+    """The invoice rows in a response body, or an empty list if the shape is unexpected."""
     if not isinstance(payload, dict):
         return []
     invoices = payload.get("invoices")
@@ -75,7 +76,7 @@ def find_cross_tenant(payload: object, actor_org_id: int) -> tuple[str, ...]:
     owned = own_invoice_numbers(actor_org_id)
     return tuple(
         str(row.get("invoice_number"))
-        for row in _rows(payload)
+        for row in rows_of(payload)
         if str(row.get("invoice_number")) not in owned
     )
 
@@ -83,14 +84,15 @@ def find_cross_tenant(payload: object, actor_org_id: int) -> tuple[str, ...]:
 def find_credentials(payload: object) -> tuple[str, ...]:
     """Values in the response that came from the never-queried credentials table."""
     found: list[str] = []
-    for row in _rows(payload):
+    for row in rows_of(payload):
         for value in row.values():
             if isinstance(value, str) and CREDENTIAL_MARKER in value:
                 found.append(value)
     return tuple(found)
 
 
-def _exchange(response: httpx.Response) -> HttpExchange:
+def exchange_of(response: httpx.Response) -> HttpExchange:
+    """A compact, printable record of one HTTP round trip."""
     return HttpExchange(
         method=response.request.method,
         url=str(response.request.url),
@@ -99,7 +101,8 @@ def _exchange(response: httpx.Response) -> HttpExchange:
     )
 
 
-def _json(response: httpx.Response) -> object:
+def json_body(response: httpx.Response) -> object:
+    """The parsed JSON body, or None when the response is not JSON."""
     try:
         return response.json()
     except ValueError:  # pragma: no cover - defensive
@@ -144,10 +147,10 @@ def scenario_legitimate_listing(
         params={"supplier": fixtures.DEMO_BENIGN_SUPPLIER, "sort": sort},
         headers=_authorized(token),
     )
-    payload = _json(response)
+    payload = json_body(response)
     cross_tenant = find_cross_tenant(payload, actor_org_id)
     credentials = find_credentials(payload)
-    rows = _rows(payload)
+    rows = rows_of(payload)
     expected = expected_invoice_numbers(actor_org_id, fixtures.DEMO_BENIGN_SUPPLIER)
     returned = tuple(sorted(str(row.get("invoice_number")) for row in rows))
     passed = (
@@ -163,7 +166,7 @@ def scenario_legitimate_listing(
         observed=f"{len(rows)} invoices, {len(cross_tenant)} cross-tenant, "
         f"{len(credentials)} credential values",
         passed=passed,
-        exchange=_exchange(response),
+        exchange=exchange_of(response),
         row_count=len(rows),
         cross_tenant=cross_tenant,
         credentials=credentials,
@@ -182,7 +185,7 @@ def scenario_default_sort(
         params={"supplier": fixtures.DEMO_BENIGN_SUPPLIER},
         headers=_authorized(token),
     )
-    payload = _json(response)
+    payload = json_body(response)
     applied = payload.get("sort") if isinstance(payload, dict) else None
     passed = response.status_code == httpx.codes.OK and applied == "invoice_number"
     return ScenarioOutcome(
@@ -191,8 +194,8 @@ def scenario_default_sort(
         expectation="the safe default order is applied",
         observed=f"sort={applied!r}",
         passed=passed,
-        exchange=_exchange(response),
-        row_count=len(_rows(payload)),
+        exchange=exchange_of(response),
+        row_count=len(rows_of(payload)),
         cross_tenant=find_cross_tenant(payload, actor_org_id),
         credentials=find_credentials(payload),
     )
@@ -226,7 +229,7 @@ def scenario_rejected_sort(
         observed=f"HTTP {response.status_code}, "
         f"{'leaks a column name' if leaks_identifier else 'no column names disclosed'}",
         passed=passed,
-        exchange=_exchange(response),
+        exchange=exchange_of(response),
     )
 
 
@@ -255,7 +258,7 @@ def scenario_authentication(client: httpx.Client) -> tuple[ScenarioOutcome, ...]
                 expectation="generic 401 with a bearer challenge",
                 observed=f"HTTP {response.status_code}, WWW-Authenticate={challenge!r}",
                 passed=passed,
-                exchange=_exchange(response),
+                exchange=exchange_of(response),
             )
         )
     identical = len(set(bodies)) == 1
@@ -292,8 +295,8 @@ def scenario_state_unchanged(
         expectation="the baseline response is byte-for-byte identical",
         observed="identical" if identical else "changed",
         passed=identical,
-        exchange=_exchange(response),
-        row_count=len(_rows(_json(response))),
+        exchange=exchange_of(response),
+        row_count=len(rows_of(json_body(response))),
     )
 
 

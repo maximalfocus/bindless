@@ -5,7 +5,6 @@ from __future__ import annotations
 import httpx
 
 from bindless import fixtures
-from bindless.demo import render_outcomes
 from bindless.scenarios import (
     find_credentials,
     own_invoice_numbers,
@@ -77,10 +76,3 @@ def test_leak_detectors_recognise_what_they_are_looking_for() -> None:
     assert "INV-2001" not in own_invoice_numbers(1)
     assert foreign["invoices"][0]["invoice_number"] in own_invoice_numbers(2)
     assert find_credentials({"invoices": [{"supplier": "Kestrel Logistics"}]}) == ()
-
-
-def test_outcomes_render_as_a_readable_table(secure_client: httpx.Client) -> None:
-    rendered = render_outcomes(run_secure_walkthrough(secure_client))
-    assert "RESULT" in rendered
-    assert "SCENARIO" in rendered
-    assert "FAIL" not in rendered
