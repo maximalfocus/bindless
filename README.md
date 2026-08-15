@@ -197,6 +197,14 @@ running applications. GitHub Actions runs this same script, followed by the one-
 | `src/bindless/fixtures.py` | the deterministic fictional data |
 | `tests/` | the security regression matrix |
 
+## Project status and support
+
+`bindless` is a local educational demonstration, offered as-is under the [MIT License](LICENSE).
+There is **no hosted service** — nothing here runs anywhere but your own machine — and it makes **no
+production-safety, support-duration, or compatibility commitment**. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) to get involved and [`SECURITY.md`](SECURITY.md) for how to
+report an *unintended* problem (the deliberately vulnerable app is not one).
+
 ## Safety boundary
 
 This is local educational software. It is not deployed or hosted anywhere, and it must not be. The
