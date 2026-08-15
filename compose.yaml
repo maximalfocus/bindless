@@ -109,16 +109,20 @@ services:
       retries: 30
       start_period: 3s
 
-  # The walkthrough. Opt-in so `docker compose up` leaves the API running for manual exploration.
+  # The one-shot comparison. Opt-in so the default `docker compose up` leaves the secure API
+  # running for manual exploration. It needs the vulnerable app, so it carries the acknowledgement
+  # and rides the `vulnerable` profile's service being up.
   demo:
     profiles: ["demo"]
     build:
       context: .
       target: runtime
-    command: ["python", "-m", "bindless.demo"]
+    command: ["python", "-m", "bindless.cli", "compare"]
     environment: *app-environment
     depends_on:
       api-secure:
+        condition: service_healthy
+      api-vulnerable:
         condition: service_healthy
 
   # Ruff, mypy, and pytest — the same boundary locally and in CI.
