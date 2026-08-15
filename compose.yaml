@@ -9,6 +9,7 @@ name: bindless
 x-app-environment: &app-environment
   BINDLESS_DATABASE_URL: postgresql+psycopg://bindless:bindless-local-demo@db:5432/bindless
   BINDLESS_SECURE_URL: http://api-secure:8000
+  BINDLESS_VULNERABLE_URL: http://api-vulnerable:8000
 
 services:
   db:
@@ -71,6 +72,43 @@ services:
       retries: 30
       start_period: 3s
 
+  # The intentionally vulnerable application. Starting it takes two deliberate actions: enabling
+  # this profile, and setting ALLOW_VULNERABLE_DEMO=true. Without the acknowledgement the process
+  # refuses to start, so `--profile vulnerable` alone is not enough.
+  api-vulnerable:
+    profiles: ["vulnerable"]
+    build:
+      context: .
+      target: runtime
+    command:
+      - uvicorn
+      - bindless.vulnerable_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --no-access-log
+    environment:
+      <<: *app-environment
+      ALLOW_VULNERABLE_DEMO: ${ALLOW_VULNERABLE_DEMO:-}
+    ports:
+      - "127.0.0.1:8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import httpx; httpx.get('http://127.0.0.1:8000/healthz').raise_for_status()
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
   # The walkthrough. Opt-in so `docker compose up` leaves the API running for manual exploration.
   demo:
     profiles: ["demo"]
@@ -93,7 +131,15 @@ services:
       - sh
       - -c
       - ruff check . && ruff format --check . && mypy && pytest
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      # Running the full suite is itself a deliberate opt-in context: it imports the vulnerable
+      # application to test it, and `check.sh` is what sets this. It is never set on the default path.
+      ALLOW_VULNERABLE_DEMO: ${ALLOW_VULNERABLE_DEMO:-}
     depends_on:
       api-secure:
+        condition: service_healthy
+      # The regression matrix has to prove what the vulnerable application actually does, so
+      # verification is one of the deliberate contexts in which it is started.
+      api-vulnerable:
         condition: service_healthy

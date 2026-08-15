@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from bindless.api import create_app
+from bindless.audit import emit_sort_rejection
 from bindless.listing import list_invoices_securely
 
 DESCRIPTION = (
@@ -21,4 +22,5 @@ app: FastAPI = create_app(
     title="bindless — secure invoice portal",
     description=DESCRIPTION,
     list_invoices=list_invoices_securely,
+    audit=emit_sort_rejection,
 )

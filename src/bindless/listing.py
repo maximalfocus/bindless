@@ -54,6 +54,9 @@ class InvoiceRow:
 class ListingResult:
     rows: tuple[InvoiceRow, ...]
     sort: str
+    #: The statement that was executed. The vulnerable application surfaces this so the
+    #: data-becoming-code mechanism is legible; the secure application never exposes it.
+    statement: str
 
 
 def resolve_sort(sort: str | None) -> str:
@@ -100,8 +103,9 @@ def list_invoices_securely(
 ) -> ListingResult:
     """Return the caller organization's matching invoices, using bound values throughout."""
     sort_key = resolve_sort(sort)
+    statement = secure_statement(sort_key)
     result = connection.execute(
-        text(secure_statement(sort_key)),
+        text(statement),
         {"org_id": org_id, "supplier": supplier},
     )
     rows = tuple(
@@ -113,4 +117,4 @@ def list_invoices_securely(
         )
         for record in result
     )
-    return ListingResult(rows=rows, sort=sort_key)
+    return ListingResult(rows=rows, sort=sort_key, statement=statement)

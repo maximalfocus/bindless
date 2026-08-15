@@ -34,12 +34,30 @@ def test_the_full_walkthrough_leaves_state_byte_for_byte_identical(
 
 
 def test_hostile_input_leaves_state_byte_for_byte_identical(
-    secure_client: httpx.Client, engine: Engine
+    secure_client: httpx.Client, vulnerable_client: httpx.Client, engine: Engine
 ) -> None:
     before = _digest(engine)
     headers = {"Authorization": f"Bearer {fixtures.DEMO_ACTOR_TOKEN}"}
-    for params in HOSTILE_INPUT:
-        secure_client.get("/invoices", params=params, headers=headers)
+    # Every path, on every code path: the same payloads reach both applications, and even the app
+    # that leaks data must not change any.
+    for client in (secure_client, vulnerable_client):
+        for params in HOSTILE_INPUT:
+            client.get("/invoices", params=params, headers=headers)
+    assert _digest(engine) == before
+
+
+def test_the_full_injection_matrix_leaves_state_unchanged(
+    vulnerable_client: httpx.Client, engine: Engine
+) -> None:
+    before = _digest(engine)
+    headers = {"Authorization": f"Bearer {fixtures.DEMO_ACTOR_TOKEN}"}
+    for supplier in (TAUTOLOGY, UNION_CREDENTIALS):
+        vulnerable_client.get("/invoices", params={"supplier": supplier}, headers=headers)
+    vulnerable_client.get(
+        "/invoices",
+        params={"supplier": fixtures.DEMO_BENIGN_SUPPLIER, "sort": "i.amount DESC"},
+        headers=headers,
+    )
     assert _digest(engine) == before
 
 

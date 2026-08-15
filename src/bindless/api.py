@@ -7,15 +7,18 @@ exactly the difference the walkthrough is about.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+import uuid
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Protocol, cast
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import Connection, Engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from bindless.audit import SortRejection
 from bindless.auth import (
     BEARER_CHALLENGE,
     GENERIC_UNAUTHORIZED_DETAIL,
@@ -36,6 +39,16 @@ from bindless.schemas import (
 #: no valid identifiers, no table or column structure, no indication of whether rows exist.
 INVALID_SORT_DETAIL = "Invalid sort parameter."
 
+#: Header the vulnerable application uses to surface the statement it assembled. It is a header
+#: rather than a response field so that both applications' JSON bodies stay directly comparable.
+EFFECTIVE_QUERY_HEADER = "X-Bindless-Effective-Query"
+
+#: Callers may supply their own correlation id; otherwise one is generated per request.
+REQUEST_ID_HEADER = "X-Request-ID"
+
+#: Emits the audit event for a refused sort identifier. Only the secure application has one.
+AuditEmitter = Callable[[SortRejection], None]
+
 
 class ListingQuery(Protocol):
     """How an application variant turns caller input into invoice rows."""
@@ -54,6 +67,12 @@ class ListingQuery(Protocol):
 class AppResources:
     engine: Engine
     session_factory: sessionmaker[Session]
+
+
+def _database_error_detail(error: SQLAlchemyError) -> str:
+    """The database's own complaint about a malformed injected identifier."""
+    original: object = getattr(error, "orig", None)
+    return str(original if original is not None else error).strip()
 
 
 def _resources(app: FastAPI) -> AppResources:
@@ -90,7 +109,21 @@ def require_principal(
 PrincipalDep = Annotated[Principal, Depends(require_principal)]
 
 
-def create_app(*, title: str, description: str, list_invoices: ListingQuery) -> FastAPI:
+def create_app(
+    *,
+    title: str,
+    description: str,
+    list_invoices: ListingQuery,
+    audit: AuditEmitter | None = None,
+    expose_statement: bool = False,
+) -> FastAPI:
+    """Build one application variant.
+
+    `audit` is supplied only by the secure application, which is the only one that can refuse a
+    sort identifier. `expose_statement` is enabled only by the vulnerable application, so the
+    secure one never hands out its query as a starting point.
+    """
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = create_db_engine()
@@ -114,9 +147,12 @@ def create_app(*, title: str, description: str, list_invoices: ListingQuery) -> 
     def list_invoices_endpoint(
         principal: PrincipalDep,
         session: SessionDep,
+        response: Response,
         supplier: Annotated[str, Query(description="Supplier name to match.")],
         sort: Annotated[str | None, Query(description="Column to order by.")] = None,
+        x_request_id: Annotated[str | None, Header()] = None,
     ) -> InvoiceListResponse:
+        request_id = x_request_id or str(uuid.uuid4())
         try:
             result = list_invoices(
                 session.connection(),
@@ -125,10 +161,35 @@ def create_app(*, title: str, description: str, list_invoices: ListingQuery) -> 
                 sort=sort,
             )
         except UnknownSortError:
+            if audit is not None:
+                audit(
+                    SortRejection(
+                        request_id=request_id,
+                        user_id=principal.user_id,
+                        org_id=principal.org_id,
+                    )
+                )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=INVALID_SORT_DETAIL,
             ) from None
+        except SQLAlchemyError as error:
+            if not expose_statement:
+                # Fail closed: the secure application must never turn a database error into an
+                # oracle for what tables, columns, or rows exist.
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Internal error.",
+                ) from None
+            # The vulnerable application hands back the database's own complaint, which is exactly
+            # the structural oracle the secure path refuses to provide. Seeing that difference is
+            # part of the demonstration.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=_database_error_detail(error),
+            ) from None
+        if expose_statement:
+            response.headers[EFFECTIVE_QUERY_HEADER] = result.statement
         invoices = [
             InvoiceOut(
                 invoice_number=row.invoice_number,
