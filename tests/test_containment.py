@@ -36,26 +36,33 @@ def test_postgres_is_not_published_to_the_host(compose: dict[str, Any]) -> None:
     assert "ports" not in _services(compose)["db"]
 
 
-def test_the_api_is_published_on_loopback_only(compose: dict[str, Any]) -> None:
-    published = _services(compose)["api-secure"].get("ports", [])
+@pytest.mark.parametrize("service", ["api-secure", "api-vulnerable"])
+def test_the_apis_are_published_on_loopback_only(compose: dict[str, Any], service: str) -> None:
+    published = _services(compose)[service].get("ports", [])
     assert published
     for mapping in published:
         assert str(mapping).startswith("127.0.0.1:"), mapping
 
 
-def test_the_api_does_not_write_an_access_log(compose: dict[str, Any]) -> None:
+@pytest.mark.parametrize("service", ["api-secure", "api-vulnerable"])
+def test_the_apis_do_not_write_an_access_log(compose: dict[str, Any], service: str) -> None:
     # The access log would record query strings, and query strings carry the payloads.
-    command = " ".join(str(part) for part in _services(compose)["api-secure"]["command"])
+    command = " ".join(str(part) for part in _services(compose)[service]["command"])
     assert "--no-access-log" in command
 
 
-def test_no_vulnerable_service_exists_yet(compose: dict[str, Any]) -> None:
-    assert [name for name in _services(compose) if "vulnerable" in name] == []
+def test_the_secure_app_is_the_default_and_the_vulnerable_one_is_not(
+    compose: dict[str, Any],
+) -> None:
+    # No profile on api-secure means the default `docker compose up` starts it.
+    assert "profiles" not in _services(compose)["api-secure"]
+    # The vulnerable app is gated behind a profile, so the default path never starts it.
+    assert _services(compose)["api-vulnerable"]["profiles"] == ["vulnerable"]
 
 
-def test_no_vulnerable_entry_point_exists_yet(repo_root: Path) -> None:
-    modules = {path.name for path in (repo_root / "src" / "bindless").glob("*.py")}
-    assert "vulnerable_app.py" not in modules
+def test_the_vulnerable_app_requires_the_acknowledgement_variable(compose: dict[str, Any]) -> None:
+    environment = _services(compose)["api-vulnerable"]["environment"]
+    assert "ALLOW_VULNERABLE_DEMO" in environment
 
 
 def test_only_the_seeder_contains_mutating_sql(repo_root: Path) -> None:
