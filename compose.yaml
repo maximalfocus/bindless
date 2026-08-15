@@ -1,0 +1,99 @@
+# The only supported way to run this project.
+#
+# `docker compose up` starts the secure application alone. Nothing here is reachable from outside
+# this machine: PostgreSQL is not published at all, and the API is bound to loopback.
+
+name: bindless
+
+# Every application container reaches the database the same way, over the private Compose network.
+x-app-environment: &app-environment
+  BINDLESS_DATABASE_URL: postgresql+psycopg://bindless:bindless-local-demo@db:5432/bindless
+  BINDLESS_SECURE_URL: http://api-secure:8000
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      # A local demonstration database on a private container network. It is deliberately not
+      # published to the host, so these values never leave the Compose network.
+      POSTGRES_USER: bindless
+      POSTGRES_PASSWORD: bindless-local-demo
+      POSTGRES_DB: bindless
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bindless -d bindless"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  # One-shot: drops, recreates, and reloads the deterministic fictional fixtures, then exits.
+  # Seeding is deliberately not reachable over HTTP.
+  seed:
+    build:
+      context: .
+      target: runtime
+    command: ["python", "-m", "bindless.seed"]
+    environment: *app-environment
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api-secure:
+    build:
+      context: .
+      target: runtime
+    command:
+      - uvicorn
+      - bindless.secure_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      # No access log: request lines would record query strings, and query strings carry payloads.
+      - --no-access-log
+    environment: *app-environment
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import httpx; httpx.get('http://127.0.0.1:8000/healthz').raise_for_status()
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
+  # The walkthrough. Opt-in so `docker compose up` leaves the API running for manual exploration.
+  demo:
+    profiles: ["demo"]
+    build:
+      context: .
+      target: runtime
+    command: ["python", "-m", "bindless.demo"]
+    environment: *app-environment
+    depends_on:
+      api-secure:
+        condition: service_healthy
+
+  # Ruff, mypy, and pytest — the same boundary locally and in CI.
+  checks:
+    profiles: ["checks"]
+    build:
+      context: .
+      target: dev
+    command:
+      - sh
+      - -c
+      - ruff check . && ruff format --check . && mypy && pytest
+    environment: *app-environment
+    depends_on:
+      api-secure:
+        condition: service_healthy
