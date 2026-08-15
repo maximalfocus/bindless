@@ -1,0 +1,31 @@
+name: verify
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose:
+    name: Docker Compose verification boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Exactly the command a contributor runs locally: Ruff, mypy, and pytest inside the image,
+      # against a freshly seeded database and the running application.
+      - name: Run checks
+        run: ./scripts/check.sh
+
+      # The documented one-shot demonstration, end to end.
+      - name: Run the demonstration
+        run: ./scripts/demo.sh

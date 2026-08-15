@@ -1,0 +1,11 @@
+.git
+.github
+.gitignore
+.dockerignore
+.venv
+.ruff_cache
+.mypy_cache
+.pytest_cache
+**/__pycache__
+*.pyc
+scripts
